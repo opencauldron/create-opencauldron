@@ -1,25 +1,58 @@
 #!/usr/bin/env node
 
 import { execSync } from "node:child_process";
-import { existsSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import readline from "node:readline";
+import * as p from "@clack/prompts";
+import pc from "picocolors";
 
 const REPO = "https://github.com/opencauldron/opencauldron.git";
 const DEFAULT_DIR = "opencauldron";
 
 // ---------------------------------------------------------------------------
+// Provider catalog
+// ---------------------------------------------------------------------------
+
+const PROVIDERS = [
+  {
+    group: "Image Models",
+    items: [
+      { value: "GEMINI_API_KEY", label: "Google Gemini", hint: "Imagen 4, Flash, Flash Lite" },
+      { value: "XAI_API_KEY", label: "xAI Grok", hint: "Grok Imagine, Grok Pro" },
+      { value: "BFL_API_KEY", label: "Black Forest Labs", hint: "Flux Pro 1.1, Flux Dev" },
+      { value: "IDEOGRAM_API_KEY", label: "Ideogram", hint: "Ideogram 3" },
+      { value: "RECRAFT_API_KEY", label: "Recraft", hint: "Recraft V3, Recraft 20B" },
+    ],
+  },
+  {
+    group: "Video Models",
+    items: [
+      { value: "GEMINI_API_KEY", label: "Google Veo 3", hint: "uses Gemini key", disabled: true },
+      { value: "RUNWAY_API_KEY", label: "Runway", hint: "Gen-4 Turbo" },
+      { value: "FAL_KEY", label: "Kling", hint: "Kling 2.1 via fal.ai" },
+      { value: "MINIMAX_API_KEY", label: "MiniMax", hint: "Hailuo 2.3" },
+      { value: "LUMA_API_KEY", label: "Luma AI", hint: "Ray 2" },
+    ],
+  },
+  {
+    group: "Tools",
+    items: [
+      { value: "MISTRAL_API_KEY", label: "Mistral", hint: "prompt enhancement" },
+    ],
+  },
+];
+
+// Flatten for unique env var keys
+const ALL_PROVIDER_ITEMS = PROVIDERS.flatMap((g) => g.items).filter((i) => !i.disabled);
+const UNIQUE_KEYS = [...new Set(ALL_PROVIDER_ITEMS.map((i) => i.value))];
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function ask(question) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((r) => rl.question(question, (a) => { rl.close(); r(a.trim()); }));
-}
-
 function run(cmd, opts = {}) {
-  execSync(cmd, { stdio: "inherit", ...opts });
+  execSync(cmd, { stdio: "ignore", ...opts });
 }
 
 function detectPM() {
@@ -27,7 +60,6 @@ function detectPM() {
   if (ua.startsWith("bun")) return "bun";
   if (ua.startsWith("pnpm")) return "pnpm";
   if (ua.startsWith("yarn")) return "yarn";
-  // Check if bun is available
   try {
     execSync("bun --version", { stdio: "ignore" });
     return "bun";
@@ -36,81 +68,260 @@ function detectPM() {
   }
 }
 
+function cancelled() {
+  p.cancel("Setup cancelled.");
+  process.exit(0);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log();
-  console.log("  \x1b[35m\x1b[1mOpenCauldron\x1b[0m — AI media generation studio");
-  console.log();
+  const skipWizard = process.argv.includes("--skip");
 
-  // 1. Project directory
-  const argDir = process.argv[2];
-  const dir = argDir && argDir !== "." ? argDir : await ask(`  Project directory: (${DEFAULT_DIR}) `) || DEFAULT_DIR;
+  console.log();
+  p.intro(`${pc.magenta(pc.bold("✦ OpenCauldron"))}  ${pc.dim("AI media generation studio")}`);
+
+  // ── Step 1: Studio name & directory ─────────────────────────────────
+
+  const argDir = process.argv.find((a) => !a.startsWith("-") && a !== process.argv[0] && a !== process.argv[1]);
+
+  const studioName = skipWizard
+    ? argDir || DEFAULT_DIR
+    : await p.text({
+        message: "What's your studio name?",
+        placeholder: DEFAULT_DIR,
+        defaultValue: argDir || DEFAULT_DIR,
+        validate: (v) => {
+          if (!v.trim()) return "Studio name is required";
+          if (/[<>:"|?*]/.test(v)) return "Invalid characters in name";
+        },
+      });
+
+  if (p.isCancel(studioName)) cancelled();
+
+  const dir = String(studioName).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  const displayName = String(studioName);
   const target = resolve(dir);
 
   if (existsSync(target)) {
-    const files = readFileSync("/dev/null", "utf8"); // dummy
-    // Check if directory is non-empty
     try {
-      const entries = execSync(`ls -A "${target}"`, { encoding: "utf8" }).trim();
-      if (entries) {
-        console.log(`\n  \x1b[31mError:\x1b[0m Directory "${dir}" is not empty.\n`);
+      const entries = readdirSync(target);
+      if (entries.length > 0) {
+        p.cancel(`Directory "${dir}" is not empty.`);
         process.exit(1);
       }
-    } catch { /* empty dir is fine */ }
+    } catch { /* fine */ }
   }
 
-  // 2. Clone
-  console.log(`\n  Cloning into \x1b[36m${dir}\x1b[0m...`);
-  run(`git clone --depth 1 ${REPO} "${target}"`);
+  // ── Step 2: Database ────────────────────────────────────────────────
 
-  // Remove .git so they start fresh
-  run(`rm -rf "${join(target, ".git")}"`);
+  let dbChoice = "docker";
+  let neonUrl = "";
 
-  // 3. Create .env.local from template
-  const envExample = join(target, ".env.example");
-  const envLocal = join(target, ".env.local");
+  if (!skipWizard) {
+    dbChoice = await p.select({
+      message: "Database",
+      options: [
+        { value: "docker", label: "Local Postgres", hint: "docker compose up db -d" },
+        { value: "neon", label: "Neon", hint: "serverless Postgres" },
+      ],
+    });
+    if (p.isCancel(dbChoice)) cancelled();
 
-  if (existsSync(envExample)) {
-    let env = readFileSync(envExample, "utf8");
+    if (dbChoice === "neon") {
+      neonUrl = await p.text({
+        message: "Neon connection string",
+        placeholder: "postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/dbname?sslmode=require",
+        validate: (v) => {
+          if (!v.includes("neon.tech")) return "Doesn't look like a Neon URL";
+        },
+      });
+      if (p.isCancel(neonUrl)) cancelled();
+    }
+  }
 
-    // Generate a NEXTAUTH_SECRET automatically
-    const secret = randomBytes(32).toString("base64");
-    env = env.replace(
-      'NEXTAUTH_SECRET=""',
-      `NEXTAUTH_SECRET="${secret}"`
+  // ── Step 3: Storage ─────────────────────────────────────────────────
+
+  let storageChoice = "local";
+
+  if (!skipWizard) {
+    storageChoice = await p.select({
+      message: "Storage",
+      options: [
+        { value: "local", label: "Local filesystem", hint: "saves to ./uploads/" },
+        { value: "r2", label: "Cloudflare R2", hint: "production storage" },
+      ],
+    });
+    if (p.isCancel(storageChoice)) cancelled();
+  }
+
+  let r2Config = {};
+  if (storageChoice === "r2") {
+    const r2 = await p.group({
+      accountId: () => p.text({ message: "R2 Account ID" }),
+      accessKeyId: () => p.text({ message: "R2 Access Key ID" }),
+      secretAccessKey: () => p.text({ message: "R2 Secret Access Key" }),
+      bucketName: () => p.text({ message: "R2 Bucket Name", placeholder: "cauldron", defaultValue: "cauldron" }),
+    });
+    if (p.isCancel(r2)) cancelled();
+    r2Config = r2;
+  }
+
+  // ── Step 4: AI Model providers ──────────────────────────────────────
+
+  let selectedKeys = [];
+  const apiKeys = {};
+
+  if (!skipWizard) {
+    // Build grouped multiselect options
+    const allOptions = [];
+    for (const group of PROVIDERS) {
+      for (const item of group.items) {
+        if (item.disabled) continue;
+        allOptions.push({
+          value: item.value,
+          label: `${item.label}  ${pc.dim(item.hint)}`,
+        });
+      }
+    }
+
+    // Show header for each group
+    p.note(
+      PROVIDERS.map((g) =>
+        `${pc.bold(g.group)}\n${g.items.map((i) =>
+          `  ${i.disabled ? pc.dim("↳") : "•"} ${i.label} ${pc.dim(`— ${i.hint}`)}`
+        ).join("\n")}`
+      ).join("\n\n"),
+      "Available models"
     );
 
-    writeFileSync(envLocal, env);
-    console.log("  Created \x1b[36m.env.local\x1b[0m with generated NEXTAUTH_SECRET");
+    selectedKeys = await p.multiselect({
+      message: "Which providers do you want to enable?",
+      options: [...new Set(ALL_PROVIDER_ITEMS.map((i) => i.value))].map((key) => {
+        const items = ALL_PROVIDER_ITEMS.filter((i) => i.value === key);
+        const label = items.map((i) => i.label).join(", ");
+        const hint = items.map((i) => i.hint).join(", ");
+        return { value: key, label, hint: pc.dim(hint) };
+      }),
+      required: false,
+    });
+
+    if (p.isCancel(selectedKeys)) cancelled();
+
+    // Prompt for each selected API key
+    for (const key of selectedKeys) {
+      const items = ALL_PROVIDER_ITEMS.filter((i) => i.value === key);
+      const label = items.map((i) => i.label).join(" / ");
+
+      const value = await p.password({
+        message: `${label} API key`,
+        validate: (v) => {
+          if (!v.trim()) return "API key is required (or go back and deselect this provider)";
+        },
+      });
+
+      if (p.isCancel(value)) cancelled();
+      apiKeys[key] = value;
+    }
   }
 
-  // 4. Install dependencies
+  // ── Clone & configure ──────────────────────────────────────────────
+
+  const s = p.spinner();
+
+  s.start("Cloning repository");
+  run(`git clone --depth 1 ${REPO} "${target}"`);
+  run(`rm -rf "${join(target, ".git")}"`);
+  s.stop("Cloned repository");
+
+  // Build .env.local
+  s.start("Generating configuration");
+
+  const envPath = join(target, ".env.example");
+  let env = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
+
+  // Database URL
+  const dbUrl = dbChoice === "neon"
+    ? neonUrl
+    : "postgresql://cauldron:cauldron@localhost:5432/cauldron";
+  env = env.replace(
+    'DATABASE_URL="postgresql://cauldron:cauldron@localhost:5432/cauldron"',
+    `DATABASE_URL="${dbUrl}"`
+  );
+
+  // NEXTAUTH_SECRET
+  const secret = randomBytes(32).toString("base64");
+  env = env.replace('NEXTAUTH_SECRET=""', `NEXTAUTH_SECRET="${secret}"`);
+
+  // Storage
+  if (storageChoice === "r2") {
+    env = env.replace('STORAGE_PROVIDER="local"', 'STORAGE_PROVIDER="r2"');
+    env = env.replace('# R2_ACCOUNT_ID=""', `R2_ACCOUNT_ID="${r2Config.accountId}"`);
+    env = env.replace('# R2_ACCESS_KEY_ID=""', `R2_ACCESS_KEY_ID="${r2Config.accessKeyId}"`);
+    env = env.replace('# R2_SECRET_ACCESS_KEY=""', `R2_SECRET_ACCESS_KEY="${r2Config.secretAccessKey}"`);
+    env = env.replace('# R2_BUCKET_NAME="cauldron"', `R2_BUCKET_NAME="${r2Config.bucketName}"`);
+  }
+
+  // Studio name as org branding
+  if (displayName && displayName !== DEFAULT_DIR) {
+    env = env.replace(
+      '# NEXT_PUBLIC_ORG_NAME=""',
+      `NEXT_PUBLIC_ORG_NAME="${displayName}"`
+    );
+  }
+
+  // API keys
+  for (const [key, value] of Object.entries(apiKeys)) {
+    env = env.replace(
+      new RegExp(`# ${key}=""`),
+      `${key}="${value}"`
+    );
+  }
+
+  writeFileSync(join(target, ".env.local"), env);
+  s.stop("Generated configuration");
+
+  // Install deps
   const pm = detectPM();
-  console.log(`\n  Installing dependencies with \x1b[36m${pm}\x1b[0m...`);
+  s.start(`Brewing your studio with ${pc.cyan(pm)}`);
   run(`${pm} install`, { cwd: target });
+  s.stop("Dependencies installed");
 
-  // 5. Init fresh git repo
-  run("git init", { cwd: target, stdio: "ignore" });
-  run("git add -A", { cwd: target, stdio: "ignore" });
-  run('git commit -m "Initial commit from create-opencauldron"', { cwd: target, stdio: "ignore" });
+  // Init git
+  s.start("Initializing git");
+  run("git init", { cwd: target });
+  run("git add -A", { cwd: target });
+  run('git commit -m "Initial commit from create-opencauldron"', { cwd: target });
+  s.stop("Git initialized");
 
-  // 6. Done
-  console.log();
-  console.log("  \x1b[32m\x1b[1mDone!\x1b[0m Your Cauldron is ready.\n");
-  console.log("  Next steps:\n");
-  console.log(`    \x1b[36mcd ${dir}\x1b[0m`);
-  console.log(`    \x1b[90m# Edit .env.local with your Google OAuth + API keys\x1b[0m`);
-  console.log(`    \x1b[36mdocker compose up db -d\x1b[0m     \x1b[90m# start Postgres\x1b[0m`);
-  console.log(`    \x1b[36m${pm} run db:push\x1b[0m             \x1b[90m# create tables\x1b[0m`);
-  console.log(`    \x1b[36m${pm} run dev\x1b[0m                 \x1b[90m# start dev server\x1b[0m`);
-  console.log();
-  console.log("  Docs: \x1b[4mhttps://github.com/opencauldron/opencauldron\x1b[0m\n");
+  // ── Summary ─────────────────────────────────────────────────────────
+
+  const summary = [
+    `${pc.bold("Studio")}     ${displayName}`,
+    `${pc.bold("Database")}   ${dbChoice === "neon" ? "Neon" : "Local Postgres (Docker)"}`,
+    `${pc.bold("Storage")}    ${storageChoice === "local" ? "Local filesystem" : "Cloudflare R2"}`,
+    `${pc.bold("Models")}     ${selectedKeys.length > 0 ? selectedKeys.length + " provider" + (selectedKeys.length > 1 ? "s" : "") : pc.dim("none yet — add keys to .env.local")}`,
+  ].join("\n");
+
+  p.note(summary, "Configuration");
+
+  // Next steps
+  const steps = [
+    `cd ${pc.cyan(dir)}`,
+    ...(dbChoice === "docker" ? [`docker compose up db -d  ${pc.dim("# start Postgres")}`] : []),
+    `${pm} run db:push          ${pc.dim("# create tables")}`,
+    ...(selectedKeys.length === 0 ? [`${pc.dim("# Add API keys to .env.local")}`] : []),
+    `${pm} run dev              ${pc.dim("# start dev server")}`,
+  ].join("\n");
+
+  p.note(steps, "Next steps");
+
+  p.outro(`${pc.magenta(pc.bold("✦"))} ${pc.bold("Your studio is ready.")} ${pc.dim("Conjure stunning media with a wave of your wand.")}`);
 }
 
 main().catch((err) => {
-  console.error(`\n  \x1b[31mError:\x1b[0m ${err.message}\n`);
+  p.cancel(err.message);
   process.exit(1);
 });

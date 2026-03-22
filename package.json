@@ -1,0 +1,29 @@
+{
+  "name": "create-opencauldron",
+  "version": "0.1.0",
+  "description": "Scaffold an OpenCauldron instance",
+  "license": "MIT",
+  "author": "OpenCauldron",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opencauldron/create-opencauldron.git"
+  },
+  "bin": {
+    "create-opencauldron": "./index.mjs"
+  },
+  "files": [
+    "index.mjs"
+  ],
+  "keywords": [
+    "opencauldron",
+    "ai",
+    "image-generation",
+    "video-generation",
+    "scaffold",
+    "create"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  }
+}

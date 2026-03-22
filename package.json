@@ -1,7 +1,7 @@
 {
   "name": "create-opencauldron",
   "version": "0.1.0",
-  "description": "Scaffold an OpenCauldron instance",
+  "description": "Scaffold an OpenCauldron studio",
   "license": "MIT",
   "author": "OpenCauldron",
   "repository": {

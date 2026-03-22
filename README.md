@@ -1,6 +1,6 @@
 # create-opencauldron
 
-Scaffold an [OpenCauldron](https://github.com/opencauldron/opencauldron) instance.
+Scaffold an [OpenCauldron](https://github.com/opencauldron/opencauldron) studio.
 
 ## Usage
 

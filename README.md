@@ -14,16 +14,33 @@ Or with a project name:
 npx create-opencauldron@latest my-studio
 ```
 
-This will:
+The interactive wizard walks you through:
 
-1. Clone the OpenCauldron repo (clean, no git history)
-2. Generate `.env.local` with a random `NEXTAUTH_SECRET`
-3. Install dependencies (auto-detects bun/pnpm/yarn/npm)
-4. Initialize a fresh git repo
+1. **Studio name** — sets the project directory and org branding
+2. **Database** — Local Postgres (Docker) or Neon serverless
+3. **Storage** — Local filesystem or Cloudflare R2
+4. **AI providers** — pick from Gemini, Grok, Flux, Ideogram, Recraft, Runway, Kling, MiniMax, Luma, and Mistral
+
+Then it clones the repo, generates `.env.local`, installs dependencies, and initializes a fresh git repo.
+
+### Skip the wizard
+
+```bash
+npx create-opencauldron@latest my-studio --skip
+```
+
+This uses all defaults (local Postgres, local storage, no API keys) — useful for CI or quick starts.
 
 ## What's next
 
-After scaffolding, edit `.env.local` with your Google OAuth credentials and at least one AI model API key, then start the dev server.
+After scaffolding, add your API keys to `.env.local`, start Postgres if using Docker, push the schema, and run the dev server:
+
+```bash
+cd my-studio
+docker compose up db -d   # if using local Postgres
+npm run db:push
+npm run dev
+```
 
 ## License
 

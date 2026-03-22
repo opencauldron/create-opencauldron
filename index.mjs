@@ -60,12 +60,7 @@ function detectPM() {
   if (ua.startsWith("bun")) return "bun";
   if (ua.startsWith("pnpm")) return "pnpm";
   if (ua.startsWith("yarn")) return "yarn";
-  try {
-    execSync("bun --version", { stdio: "ignore" });
-    return "bun";
-  } catch {
-    return "npm";
-  }
+  return "npm";
 }
 
 function cancelled() {

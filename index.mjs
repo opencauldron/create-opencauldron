@@ -96,7 +96,7 @@ async function main() {
 
   if (p.isCancel(studioName)) cancelled();
 
-  const dir = String(studioName).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  const dir = String(studioName).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/^-+|-+$/g, "");
   const displayName = String(studioName);
   const target = resolve(dir);
 
@@ -261,10 +261,14 @@ async function main() {
 
   // Studio name as org branding
   if (displayName && displayName !== DEFAULT_DIR) {
-    env = env.replace(
-      '# NEXT_PUBLIC_ORG_NAME=""',
-      `NEXT_PUBLIC_ORG_NAME="${displayName}"`
-    );
+    if (env.includes('# NEXT_PUBLIC_ORG_NAME=""')) {
+      env = env.replace(
+        '# NEXT_PUBLIC_ORG_NAME=""',
+        `NEXT_PUBLIC_ORG_NAME="${displayName}"`
+      );
+    } else {
+      env += `\nNEXT_PUBLIC_ORG_NAME="${displayName}"\n`;
+    }
   }
 
   // API keys

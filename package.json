@@ -1,13 +1,14 @@
 {
   "name": "create-opencauldron",
-  "version": "0.1.1",
-  "description": "Scaffold an OpenCauldron studio",
+  "version": "0.2.0",
+  "description": "Deprecated. The OpenCauldron setup wizard now lives in the main repo — run `pnpm setup` after cloning.",
   "license": "MIT",
   "author": "OpenCauldron",
   "repository": {
     "type": "git",
     "url": "https://github.com/opencauldron/create-opencauldron.git"
   },
+  "homepage": "https://github.com/opencauldron/opencauldron#fork-your-own-studio",
   "bin": {
     "create-opencauldron": "./index.mjs"
   },
@@ -16,18 +17,10 @@
   ],
   "keywords": [
     "opencauldron",
-    "ai",
-    "image-generation",
-    "video-generation",
-    "scaffold",
-    "create"
+    "deprecated"
   ],
   "type": "module",
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "@clack/prompts": "^1.1.0",
-    "picocolors": "^1.1.1"
   }
 }
